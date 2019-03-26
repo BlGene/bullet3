@@ -11,25 +11,31 @@ subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 */
 
+#include <iostream>
+#include <fstream>
+#include <string>
+
+
 #include "eglRendererVisualShapeConverter.h"
-#include "../Importers/ImportURDFDemo/URDFImporterInterface.h"
+
+#include "Bullet3Common/b3FileUtils.h"
 #include "btBulletCollisionCommon.h"
+#include "BulletCollision/CollisionShapes/btShapeHull.h"  //to create a tesselation of a generic btConvexShape
+
+#include "../CommonInterfaces/CommonGUIHelperInterface.h"
+#include "../SharedMemory/SharedMemoryPublic.h"  //for b3VisualShapeData
+#include "../Utils/b3ResourcePath.h"
+#include "../Importers/ImportURDFDemo/URDFImporterInterface.h"
 #include "../Importers/ImportObjDemo/LoadMeshFromObj.h"
 #include "../Importers/ImportSTLDemo/LoadMeshFromSTL.h"
 #include "../Importers/ImportColladaDemo/LoadMeshFromCollada.h"
-#include "BulletCollision/CollisionShapes/btShapeHull.h"  //to create a tesselation of a generic btConvexShape
-#include "../CommonInterfaces/CommonGUIHelperInterface.h"
-#include "Bullet3Common/b3FileUtils.h"
-#include <string>
-#include "../Utils/b3ResourcePath.h"
-#include "../TinyRenderer/TinyRenderer.h"
-#include "../OpenGLWindow/SimpleCamera.h"
 #include "../Importers/ImportMeshUtility/b3ImportMeshUtility.h"
-#include <iostream>
-#include <fstream>
 #include "../Importers/ImportURDFDemo/UrdfParser.h"
-#include "../SharedMemory/SharedMemoryPublic.h"  //for b3VisualShapeData
+#include "../TinyRenderer/TinyRenderer.h"
 #include "../TinyRenderer/model.h"
+#include "../OpenGLWindow/SimpleCamera.h"
+#include "OpenGLWindow/GLInstancingRenderer.h"
+#include "OpenGLWindow/GLRenderToTexture.h"
 #include "stb_image/stb_image.h"
 #include "LinearMath/btMinMax.h"
 
@@ -51,16 +57,28 @@ typedef X11OpenGLWindow DefaultOpenGLWindow;
 #endif  // _WIN32
 #endif  //__APPLE__
 
-#include "OpenGLWindow/GLInstancingRenderer.h"
-#include "OpenGLWindow/GLRenderToTexture.h"
-
-static void printGLString(const char* name, GLenum s)
-{
-	const char* v = (const char*)glGetString(s);
-	printf("%s = %s\n", name, v);
-}
+#define START_WIDTH 2560
+#define START_HEIGHT 2048
 
 using namespace std;
+
+
+// Tentative attempt to bring some documentation to this code, I haven't understood
+// it completeley so, please take it with a grain of salt.
+//
+// The degree of redundancy is quite high, there are copys of objects in:
+// 1. m_visualShapes (of type b3VisualShapeData)
+// 2. m_swRenderInstances (of type EGLRendererObjectArray/ TinyRenderObjectData)
+// 3. m_instancingRenderer (of type m_instancingRenderer)
+
+// There are different indexing variables for these:
+// 1. objectUniqueId (sometimes also bodyUniqueId) to index m_visualShapes
+// 2. collisionObjectUniqueId to index m_swRenderInstances
+// 3. m_graphicsInstanceId to index m_instancingRenderer
+//
+// Im not sure if m_swRenderInstances/TinyRenderObjectData is needed at all,
+// or just left over from the TinyRenderer plugin.
+
 
 struct MyTexture3
 {
@@ -87,35 +105,39 @@ struct EGLRendererObjectArray
 	}
 };
 
-#define START_WIDTH 2560
-#define START_HEIGHT 2048
+static void printGLString(const char* name, GLenum s)
+{
+	const char* v = (const char*)glGetString(s);
+	printf("%s = %s\n", name, v);
+}
 
 struct EGLRendererVisualShapeConverterInternalData
 {
 	class CommonWindowInterface* m_window;
 	class GLInstancingRenderer* m_instancingRenderer;
-	btAlignedObjectArray<unsigned char> m_rgbaPixelBuffer1;
-	btAlignedObjectArray<float> m_depthBuffer1;
-
-	btAlignedObjectArray<unsigned char> m_segmentationMaskSourceRgbaPixelBuffer;
-	btAlignedObjectArray<float> m_segmentationMaskSourceDepthBuffer;
-
-	btAlignedObjectArray<int> m_graphicsIndexToSegmentationMask;
-	btHashMap<btHashInt, EGLRendererObjectArray*> m_swRenderInstances;
 
 	btAlignedObjectArray<b3VisualShapeData> m_visualShapes;
+	btHashMap<btHashInt, EGLRendererObjectArray*> m_swRenderInstances;
+
+	TGAImage m_rgbColorBuffer;
+	b3AlignedObjectArray<MyTexture3> m_textures;
+
+	// buffers
+	btAlignedObjectArray<unsigned char> m_sourceRgbaPixelBuffer;
+	btAlignedObjectArray<unsigned char> m_rgbaPixelBuffer1;
+	btAlignedObjectArray<float> m_sourceDepthBuffer;
+	b3AlignedObjectArray<float> m_depthBuffer;
+	btAlignedObjectArray<float> m_depthBuffer1;
+	btAlignedObjectArray<int> m_graphicsIndexToSegmentationMask;
+	btAlignedObjectArray<unsigned char> m_segmentationMaskSourceRgbaPixelBuffer;
+	btAlignedObjectArray<float> m_segmentationMaskSourceDepthBuffer;
+	b3AlignedObjectArray<int> m_segmentationMaskBuffer;
+	b3AlignedObjectArray<float> m_shadowBuffer;
 
 	int m_upAxis;
 	int m_swWidth;
 	int m_swHeight;
-	btAlignedObjectArray<unsigned char> m_sourceRgbaPixelBuffer;
-	btAlignedObjectArray<float> m_sourceDepthBuffer;
 
-	TGAImage m_rgbColorBuffer;
-	b3AlignedObjectArray<MyTexture3> m_textures;
-	b3AlignedObjectArray<float> m_depthBuffer;
-	b3AlignedObjectArray<float> m_shadowBuffer;
-	b3AlignedObjectArray<int> m_segmentationMaskBuffer;
 	btVector3 m_lightDirection;
 	bool m_hasLightDirection;
 	btVector3 m_lightColor;
@@ -905,26 +927,30 @@ void EGLRendererVisualShapeConverter::changeRGBAColor(int bodyUniqueId, int link
 			m_data->m_visualShapes[i].m_rgbaColor[1] = rgbaColor[1];
 			m_data->m_visualShapes[i].m_rgbaColor[2] = rgbaColor[2];
 			m_data->m_visualShapes[i].m_rgbaColor[3] = rgbaColor[3];
-			m_data->m_instancingRenderer->writeSingleInstanceColorToCPU(rgbaColor,i);
 		}
 	}
 
 	for (int i = 0; i < m_data->m_swRenderInstances.size(); i++)
 	{
-		EGLRendererObjectArray** ptrptr = m_data->m_swRenderInstances.getAtIndex(i);
-		if (ptrptr && *ptrptr)
+		EGLRendererObjectArray** renderObjPtrPtr = m_data->m_swRenderInstances.getAtIndex(i);
+		if (renderObjPtrPtr && *renderObjPtrPtr)
 		{
+			EGLRendererObjectArray* renderObjPtr = *renderObjPtrPtr;
+
 			float rgba[4] = {(float)rgbaColor[0], (float)rgbaColor[1], (float)rgbaColor[2], (float)rgbaColor[3]};
-			EGLRendererObjectArray* visuals = *ptrptr;
-			if ((bodyUniqueId == visuals->m_objectUniqueId) && (linkIndex == visuals->m_linkIndex))
+			if ((bodyUniqueId == renderObjPtr->m_objectUniqueId) && (linkIndex == renderObjPtr->m_linkIndex))
 			{
-				for (int q = 0; q < visuals->m_renderObjects.size(); q++)
+				// change EGLRendererObjectArray::TinyRenderObjectData maybe not needed?
+				for (int q = 0; q < renderObjPtr->m_renderObjects.size(); q++)
 				{
 					if (shapeIndex < 0 || q == shapeIndex)
 					{
-						visuals->m_renderObjects[q]->m_model->setColorRGBA(rgba);
+						renderObjPtr->m_renderObjects[q]->m_model->setColorRGBA(rgba);
 					}
 				}
+
+				// change GLInstancingRenderer, probably needed
+				m_data->m_instancingRenderer->writeSingleInstanceColorToCPU(rgbaColor, renderObjPtr->m_graphicsInstanceId);
 			}
 		}
 	}
@@ -977,13 +1003,7 @@ void EGLRendererVisualShapeConverter::render(const float viewMat[16], const floa
 	// GLInstancingRender calls m_activeCamera, so set this.
 
 	m_data->m_camera.setVRCamera(viewMat, projMat);
-
 	render();
-
-	//cout<<viewMat[4*0 + 0]<<" "<<viewMat[4*0+1]<<" "<<viewMat[4*0+2]<<" "<<viewMat[4*0+3] << endl;
-	//cout<<viewMat[4*1 + 0]<<" "<<viewMat[4*1+1]<<" "<<viewMat[4*1+2]<<" "<<viewMat[4*1+3] << endl;
-	//cout<<viewMat[4*2 + 0]<<" "<<viewMat[4*2+1]<<" "<<viewMat[4*2+2]<<" "<<viewMat[4*2+3] << endl;
-	//cout<<viewMat[4*3 + 0]<<" "<<viewMat[4*3+1]<<" "<<viewMat[4*3+2]<<" "<<viewMat[4*3+3] << endl;
 }
 
 void EGLRendererVisualShapeConverter::getWidthAndHeight(int& width, int& height)
@@ -1380,17 +1400,17 @@ int EGLRendererVisualShapeConverter::loadTextureFile(const char* filename, struc
 
 void EGLRendererVisualShapeConverter::syncTransform(int collisionObjectUniqueId, const btTransform& worldTransform, const btVector3& localScaling)
 {
-	EGLRendererObjectArray** renderObjPtr = m_data->m_swRenderInstances[collisionObjectUniqueId];
-	if (renderObjPtr)
+	EGLRendererObjectArray** renderObjPtrPtr = m_data->m_swRenderInstances[collisionObjectUniqueId];
+	if (renderObjPtrPtr)
 	{
-		EGLRendererObjectArray* renderObj = *renderObjPtr;
-		renderObj->m_worldTransform = worldTransform;
-		renderObj->m_localScaling = localScaling;
-		if (renderObj->m_graphicsInstanceId >= 0)
+		EGLRendererObjectArray* renderObjPtr = *renderObjPtrPtr;
+		renderObjPtr->m_worldTransform = worldTransform;
+		renderObjPtr->m_localScaling = localScaling;
+		if (renderObjPtr->m_graphicsInstanceId >= 0)
 		{
 			btVector3 pos = worldTransform.getOrigin();
 			btQuaternion orn = worldTransform.getRotation();
-			m_data->m_instancingRenderer->writeSingleInstanceTransformToCPU(pos, orn, renderObj->m_graphicsInstanceId);
+			m_data->m_instancingRenderer->writeSingleInstanceTransformToCPU(pos, orn, renderObjPtr->m_graphicsInstanceId);
 		}
 	}
 }
