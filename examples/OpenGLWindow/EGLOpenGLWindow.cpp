@@ -124,7 +124,11 @@ void EGLOpenGLWindow::createWindow(const b3gWindowConstructionInfo& ci)
 	{
 		printf("eglQueryDevicesEXT Failed.\n");
 		m_data->egl_display = EGL_NO_DISPLAY;
+	} else
+	{
+		fprintf(stderr, "EGL device choice: %d of %d.\n", m_data->m_renderDevice, num_devices);
 	}
+
 	// Query EGL Screens
 	if (m_data->m_renderDevice == -1)
 	{
@@ -143,6 +147,7 @@ void EGLOpenGLWindow::createWindow(const b3gWindowConstructionInfo& ci)
 					m_data->egl_display = display;
 				}
 			}
+			fprintf(stderr, "GetDisplay %d failed with error: %x\n", i, eglGetError());
 		}
 	}
 	else
@@ -170,7 +175,7 @@ void EGLOpenGLWindow::createWindow(const b3gWindowConstructionInfo& ci)
 
 	if (!eglInitialize(m_data->egl_display, NULL, NULL))
 	{
-		fprintf(stderr, "Unable to initialize EGL\n");
+		fprintf(stderr, "eglInitialize() failed with error: %x\n", eglGetError());
 		exit(EXIT_FAILURE);
 	}
 
