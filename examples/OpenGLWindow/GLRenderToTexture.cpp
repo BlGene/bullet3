@@ -14,7 +14,7 @@ GLRenderToTexture::GLRenderToTexture()
 {
 #if !defined(_WIN32) && !defined(__APPLE__)
 	const GLubyte* ven = glGetString(GL_VENDOR);
-	printf("ven = %s\n", ven);
+	//printf("ven = %s\n", ven);
 
 	if (strncmp((const char*)ven, "Intel", 5) == 0)
 	{

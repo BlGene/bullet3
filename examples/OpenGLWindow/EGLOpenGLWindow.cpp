@@ -244,15 +244,16 @@ void EGLOpenGLWindow::createWindow(const b3gWindowConstructionInfo& ci)
 		exit(EXIT_FAILURE);
 	}
 
-	const GLubyte* ven = glGetString(GL_VENDOR);
-	printf("GL_VENDOR=%s\n", ven);
+	// print this in plugin:
+	// const GLubyte* ven = glGetString(GL_VENDOR);
+	// printf("GL_VENDOR=%s\n", ven);
+	// const GLubyte* ren = glGetString(GL_RENDERER);
+	// printf("GL_RENDERER=%s\n", ren);
+	// const GLubyte* ver = glGetString(GL_VERSION);
+	// printf("GL_VERSION=%s\n", ver);
+	// const GLubyte* sl = glGetString(GL_SHADING_LANGUAGE_VERSION);
+	// printf("GL_SHADING_LANGUAGE_VERSION=%s\n", sl);
 
-	const GLubyte* ren = glGetString(GL_RENDERER);
-	printf("GL_RENDERER=%s\n", ren);
-	const GLubyte* ver = glGetString(GL_VERSION);
-	printf("GL_VERSION=%s\n", ver);
-	const GLubyte* sl = glGetString(GL_SHADING_LANGUAGE_VERSION);
-	printf("GL_SHADING_LANGUAGE_VERSION=%s\n", sl);
 	glViewport(0,0,m_data->m_windowWidth, m_data->m_windowHeight);
 	//int i = pthread_getconcurrency();
 	//printf("pthread_getconcurrency()=%d\n", i);
